@@ -18,7 +18,6 @@ Acesso:
 
 O Frontend estará disponível em: http://localhost:3000
 
-A API do Backend pode ser testada em: http://localhost:3001/api/opportunities
 
 Isolamento e Portabilidade: O ambiente está isolado via Docker. Basta compactar todo o diretório do projeto e, em qualquer outro computador com Docker instalado, executar os mesmos comandos para rodar o projeto.
 
