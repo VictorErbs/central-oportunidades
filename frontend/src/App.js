@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { db } from './firebase';
+import { ref, onValue, set, push, remove, update } from 'firebase/database';
 import './App.css';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
@@ -975,33 +977,80 @@ function App() {
     }
   }, []);
 
-  const handleLogin = (token, userData) => {
-    setToken(token);
-    setUser(userData);
-    localStorage.setItem('token', token);
-    localStorage.setItem('user', JSON.stringify(userData));
-    setPage('oportunidades');
-    setFeedback({
-      type: 'success',
-      message: 'Login realizado com sucesso!'
-    });
+  const handleLogin = async (token, userData) => {
+    try {
+      // Salvar token no Firebase
+      const tokenRef = ref(db, `tokens/${token}`);
+      await set(tokenRef, {
+        userId: userData.id,
+        createdAt: new Date().toISOString()
+      });
+
+      setToken(token);
+      setUser(userData);
+      localStorage.setItem('token', token);
+      localStorage.setItem('user', JSON.stringify(userData));
+      setPage('oportunidades');
+      setFeedback({
+        type: 'success',
+        message: 'Login realizado com sucesso!'
+      });
+    } catch (error) {
+      console.error('Erro ao fazer login:', error);
+      setFeedback({
+        type: 'error',
+        message: 'Erro ao fazer login. Tente novamente.'
+      });
+    }
   };
 
-  const handleLogout = () => {
-    setToken(null);
-    setUser(null);
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    setPage('login');
-    setFeedback({
-      type: 'success',
-      message: 'Logout realizado com sucesso!'
-    });
+  const handleLogout = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (token) {
+        // Remover token do Firebase
+        const tokenRef = ref(db, `tokens/${token}`);
+        await remove(tokenRef);
+      }
+
+      setToken(null);
+      setUser(null);
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      setPage('login');
+      setFeedback({
+        type: 'success',
+        message: 'Logout realizado com sucesso!'
+      });
+    } catch (error) {
+      console.error('Erro ao fazer logout:', error);
+      setFeedback({
+        type: 'error',
+        message: 'Erro ao fazer logout. Tente novamente.'
+      });
+    }
   };
 
-  const handleUpdateProfile = (updatedUser) => {
-    setUser(updatedUser);
-    localStorage.setItem('user', JSON.stringify(updatedUser));
+  const handleUpdateProfile = async (updatedUser) => {
+    try {
+      const userRef = ref(db, `users/${updatedUser.id}`);
+      await update(userRef, {
+        profile: updatedUser.profile
+      });
+
+      setUser(updatedUser);
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+      setFeedback({
+        type: 'success',
+        message: 'Perfil atualizado com sucesso!'
+      });
+    } catch (error) {
+      console.error('Erro ao atualizar perfil:', error);
+      setFeedback({
+        type: 'error',
+        message: 'Erro ao atualizar perfil. Tente novamente.'
+      });
+    }
   };
 
   if (!token) {
