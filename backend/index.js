@@ -1,21 +1,23 @@
-const express = require('express');
-const cors = require('cors');
-const bodyParser = require('body-parser');
-const morgan = require('morgan');
-const { 
-  db, 
-  createUser, 
-  findUserByEmail, 
-  updateUserData, 
-  saveToken, 
-  removeToken, 
-  verifyToken,
+import express from 'express';
+import cors from 'cors';
+import bodyParser from 'body-parser';
+import morgan from 'morgan';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { config } from './src/config.js';
+import {
+  db,
+  createUser,
+  findUserByEmail,
+  updateUserData,
   ref,
-  get
-} = require('./src/firebase-setup');
+  get,
+  set,
+  push
+} from './src/firebase-setup.js';
 
 const app = express();
-const port = process.env.PORT || 3001;
+const port = config.server.port;
 
 // Middlewares
 app.use(cors());
@@ -29,27 +31,22 @@ function isValidEmail(email) {
 }
 
 function isValidPassword(password) {
-  const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d]{8,}$/;
-  return passwordRegex.test(password);
+  return password.length >= 8;
 }
 
 // Função para criar um perfil padrão
-function createDefaultProfile() {
+function createDefaultProfile(userType) {
   return {
     fullName: '',
     bio: '',
     location: '',
     education: '',
     skills: [],
-    socialMedia: {
-      linkedin: '',
-      instagram: '',
-      github: '',
-      twitter: ''
-    },
+    socialMedia: { linkedin: '', instagram: '', github: '', twitter: '' },
     interests: [],
     savedOpportunities: [],
     applications: [],
+    userType,
     createdAt: new Date().toISOString()
   };
 }
@@ -58,21 +55,34 @@ function createDefaultProfile() {
 const authMiddleware = async (req, res, next) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
-    if (!token) {
-      return res.status(401).json({ message: 'Token não fornecido' });
+    if (!token) return res.status(401).json({ message: 'Token não fornecido' });
+
+    const decoded = jwt.verify(token, config.jwt.secret);
+    const userRef = ref(db, `users/${decoded.userId}`);
+    const snapshot = await get(userRef);
+    
+    if (!snapshot.exists()) {
+      return res.status(401).json({ message: 'Usuário não encontrado' });
     }
 
-    const tokenData = await verifyToken(token);
-    if (!tokenData) {
-      return res.status(401).json({ message: 'Token inválido' });
-    }
-
-    req.userId = tokenData.userId;
+    req.user = { id: decoded.userId, ...snapshot.val() };
     next();
   } catch (error) {
     console.error('Erro na autenticação:', error);
-    res.status(500).json({ message: 'Erro na autenticação' });
+    const message = error.name === 'TokenExpiredError' 
+      ? 'Token expirado' 
+      : 'Token inválido';
+    res.status(401).json({ message });
   }
+};
+
+const employerMiddleware = (req, res, next) => {
+  if (req.user.profile.userType !== 'Empregador') {
+    return res.status(403).json({ 
+      message: 'Acesso restrito a empregadores' 
+    });
+  }
+  next();
 };
 
 // Rotas de autenticação
@@ -80,91 +90,98 @@ const authRoutes = express.Router();
 
 authRoutes.post('/register', async (req, res) => {
   try {
-    const { username, password, email } = req.body;
+    const { username, password, email, userType } = req.body;
+    const requiredFields = { username, password, email, userType };
 
-    if (!username || !password || !email) {
+    // Validação de campos
+    const missingFields = Object.entries(requiredFields)
+      .filter(([_, value]) => !value)
+      .map(([key]) => key);
+
+    if (missingFields.length > 0) {
+      return res.status(400).json({
+        error: 'Campos obrigatórios faltando',
+        fields: missingFields
+      });
+    }
+
+    if (!['Jovem', 'Empregador'].includes(userType)) {
       return res.status(400).json({ 
-        error: 'Campos obrigatórios',
-        message: 'Todos os campos são obrigatórios'
+        error: 'Tipo de usuário inválido',
+        validTypes: ['Jovem', 'Empregador']
       });
     }
 
     if (!isValidEmail(email)) {
       return res.status(400).json({ 
-        error: 'Email inválido',
-        message: 'Por favor, forneça um email válido'
+        error: 'Formato de email inválido'
       });
     }
 
     if (!isValidPassword(password)) {
       return res.status(400).json({ 
-        error: 'Senha inválida',
-        message: 'A senha deve ter no mínimo 8 caracteres, incluindo letras maiúsculas, minúsculas e números'
+        error: 'Senha deve ter no mínimo 8 caracteres'
       });
     }
 
-    const existingUser = await findUserByEmail(email);
-    if (existingUser) {
-      return res.status(400).json({ 
-        error: 'Email já cadastrado',
-        message: 'Este email já está cadastrado'
+    if (await findUserByEmail(email)) {
+      return res.status(409).json({ 
+        error: 'Email já cadastrado'
       });
     }
 
+    // Hash da senha
+    const hashedPassword = await bcrypt.hash(password, config.bcrypt.saltRounds);
     const newUser = await createUser({
       username,
-      password, // Em produção, deve-se usar hash da senha
+      password: hashedPassword,
       email,
-      profile: createDefaultProfile()
+      profile: createDefaultProfile(userType)
     });
 
-    res.status(201).json({ 
-      message: 'Usuário cadastrado com sucesso',
+    // Geração do token JWT
+    const token = jwt.sign({ userId: newUser.id }, config.jwt.secret, { 
+      expiresIn: '1h' 
+    });
+
+    res.status(201).json({
+      message: 'Usuário registrado com sucesso',
       user: {
         id: newUser.id,
         username: newUser.username,
         email: newUser.email,
         profile: newUser.profile
-      }
+      },
+      token
     });
   } catch (error) {
-    res.status(500).json({ 
-      error: 'Erro no cadastro',
-      message: 'Ocorreu um erro ao realizar o cadastro'
-    });
+    console.error('Erro no registro:', error);
+    res.status(500).json({ error: 'Erro no servidor' });
   }
 });
 
 authRoutes.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-
+    
     if (!email || !password) {
       return res.status(400).json({ 
-        error: 'Campos obrigatórios',
-        message: 'Email e senha são obrigatórios'
-      });
-    }
-
-    if (!isValidEmail(email)) {
-      return res.status(400).json({ 
-        error: 'Email inválido',
-        message: 'Por favor, forneça um email válido'
+        error: 'Email e senha são obrigatórios' 
       });
     }
 
     const user = await findUserByEmail(email);
-    if (!user || user.password !== password) {
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ 
-        error: 'Credenciais inválidas',
-        message: 'Email ou senha incorretos'
+        error: 'Credenciais inválidas' 
       });
     }
 
-    const token = Math.random().toString(36).substring(2);
-    await saveToken(token, user.id);
+    const token = jwt.sign({ userId: user.id }, config.jwt.secret, { 
+      expiresIn: '1h' 
+    });
 
-    res.json({ 
+    res.json({
       token,
       user: {
         id: user.id,
@@ -174,24 +191,13 @@ authRoutes.post('/login', async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({ 
-      error: 'Erro no login',
-      message: 'Ocorreu um erro ao realizar o login'
-    });
+    console.error('Erro no login:', error);
+    res.status(500).json({ error: 'Erro no servidor' });
   }
 });
 
-authRoutes.post('/logout', authMiddleware, async (req, res) => {
-  try {
-    const token = req.headers.authorization?.split(' ')[1];
-    await removeToken(token);
-    res.json({ message: 'Logout realizado com sucesso' });
-  } catch (error) {
-    res.status(500).json({ 
-      error: 'Erro no logout',
-      message: 'Ocorreu um erro ao realizar o logout'
-    });
-  }
+authRoutes.post('/logout', authMiddleware, (req, res) => {
+  res.json({ message: 'Logout realizado com sucesso' });
 });
 
 // Rotas de perfil
@@ -199,235 +205,274 @@ const profileRoutes = express.Router();
 
 profileRoutes.get('/', authMiddleware, async (req, res) => {
   try {
-    const userRef = ref(db, `users/${req.userId}`);
-    const snapshot = await get(userRef);
-    if (!snapshot.exists()) {
-      return res.status(404).json({ message: 'Usuário não encontrado' });
-    }
-    res.json(snapshot.val());
+    // Dados do usuário já estão disponíveis via middleware
+    res.json(req.user);
   } catch (error) {
     console.error('Erro ao buscar perfil:', error);
-    res.status(500).json({ message: 'Erro ao buscar perfil' });
+    res.status(500).json({ error: 'Erro no servidor' });
   }
 });
 
 profileRoutes.put('/', authMiddleware, async (req, res) => {
   try {
-    const updatedUser = await updateUserData(req.userId, req.body);
-    res.json(updatedUser);
+    // Atualiza apenas campos fornecidos
+    const updates = {};
+    const validFields = [
+      'fullName', 'bio', 'location', 'education', 
+      'skills', 'socialMedia', 'interests'
+    ];
+
+    Object.keys(req.body).forEach(key => {
+      if (validFields.includes(key)) {
+        updates[`profile/${key}`] = req.body[key];
+      }
+    });
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'Nenhum campo válido para atualização' });
+    }
+
+    await updateUserData(req.user.id, updates);
+    res.json({ message: 'Perfil atualizado com sucesso' });
   } catch (error) {
     console.error('Erro ao atualizar perfil:', error);
-    res.status(500).json({ message: 'Erro ao atualizar perfil' });
+    res.status(500).json({ error: 'Erro no servidor' });
   }
 });
 
 // Rotas de oportunidades
 const opportunityRoutes = express.Router();
 
+// Cache simples para oportunidades
+let opportunitiesCache = null;
+let cacheTimestamp = 0;
+
 opportunityRoutes.get('/', async (req, res) => {
   try {
     const { busca, type, location } = req.query;
-    const opportunitiesRef = ref(db, 'opportunities');
-    const snapshot = await get(opportunitiesRef);
     
-    if (!snapshot.exists()) {
-      return res.json([]);
+    // Cache de 5 minutos
+    if (!opportunitiesCache || Date.now() - cacheTimestamp > 300000) {
+      const snapshot = await get(ref(db, 'opportunities'));
+      opportunitiesCache = snapshot.exists() 
+        ? Object.entries(snapshot.val()).map(([id, data]) => ({ id, ...data }))
+        : [];
+      cacheTimestamp = Date.now();
     }
 
-    let opportunities = Object.entries(snapshot.val()).map(([id, data]) => ({
-      id,
-      ...data
-    }));
+    let results = [...opportunitiesCache];
 
+    // Filtros
     if (busca) {
       const searchTerm = busca.toLowerCase();
-      opportunities = opportunities.filter(opp =>
+      results = results.filter(opp => 
         opp.title.toLowerCase().includes(searchTerm) ||
         opp.description.toLowerCase().includes(searchTerm) ||
-        opp.company.toLowerCase().includes(searchTerm) ||
-        opp.type.toLowerCase().includes(searchTerm)
+        opp.company.toLowerCase().includes(searchTerm)
       );
     }
 
     if (type) {
-      opportunities = opportunities.filter(opp =>
+      results = results.filter(opp => 
         opp.type.toLowerCase() === type.toLowerCase()
       );
     }
 
     if (location) {
-      opportunities = opportunities.filter(opp =>
+      results = results.filter(opp => 
         opp.location.toLowerCase().includes(location.toLowerCase())
       );
     }
 
-    opportunities.sort((a, b) => 
+    // Ordenação
+    results.sort((a, b) => 
       new Date(b.createdAt) - new Date(a.createdAt)
     );
 
-    res.json(opportunities);
+    res.json(results);
   } catch (error) {
-    res.status(500).json({ 
-      error: 'Erro ao buscar oportunidades',
-      message: 'Ocorreu um erro ao buscar as oportunidades'
-    });
+    console.error('Erro ao buscar oportunidades:', error);
+    res.status(500).json({ error: 'Erro no servidor' });
   }
 });
 
 opportunityRoutes.get('/saved', authMiddleware, async (req, res) => {
   try {
-    const user = await findUserByEmail(req.userId);
-    if (!user || !user.profile.savedOpportunities) {
-      return res.json([]);
-    }
+    const savedIds = req.user.profile.savedOpportunities || [];
+    if (savedIds.length === 0) return res.json([]);
 
     const opportunitiesRef = ref(db, 'opportunities');
-    const opportunitiesSnapshot = await get(opportunitiesRef);
+    const snapshot = await get(opportunitiesRef);
     
-    if (!opportunitiesSnapshot.exists()) {
-      return res.json([]);
-    }
+    if (!snapshot.exists()) return res.json([]);
 
-    const opportunities = Object.entries(opportunitiesSnapshot.val())
-      .filter(([id]) => user.profile.savedOpportunities.includes(id))
-      .map(([id, data]) => ({
-        id,
-        ...data
-      }));
+    const opportunities = Object.entries(snapshot.val())
+      .filter(([id]) => savedIds.includes(id))
+      .map(([id, data]) => ({ id, ...data }));
 
     res.json(opportunities);
   } catch (error) {
-    res.status(500).json({ 
-      error: 'Erro ao buscar oportunidades salvas',
-      message: 'Ocorreu um erro ao buscar suas oportunidades salvas'
-    });
+    console.error('Erro ao buscar oportunidades salvas:', error);
+    res.status(500).json({ error: 'Erro no servidor' });
   }
 });
 
 opportunityRoutes.post('/save/:id', authMiddleware, async (req, res) => {
   try {
-    const user = await findUserByEmail(req.userId);
-    if (!user) {
-      return res.status(401).json({ 
-        error: 'Usuário não encontrado',
-        message: 'Não foi possível encontrar seu usuário'
-      });
+    const { id: userId } = req.user;
+    const opportunityId = req.params.id;
+    
+    // Verificar se oportunidade existe
+    const opportunityRef = ref(db, `opportunities/${opportunityId}`);
+    const snapshot = await get(opportunityRef);
+    if (!snapshot.exists()) {
+      return res.status(404).json({ error: 'Oportunidade não encontrada' });
     }
 
-    const opportunityRef = ref(db, 'opportunities/' + req.params.id);
-    const opportunitySnapshot = await get(opportunityRef);
+    // Atualizar lista de salvos
+    const saved = [...new Set([
+      ...(req.user.profile.savedOpportunities || []), 
+      opportunityId
+    ])];
 
-    if (!opportunitySnapshot.exists()) {
-      return res.status(404).json({ 
-        error: 'Oportunidade não encontrada',
-        message: 'Esta oportunidade não existe mais'
-      });
-    }
-
-    const savedOpportunities = user.profile.savedOpportunities || [];
-    if (!savedOpportunities.includes(req.params.id)) {
-      savedOpportunities.push(req.params.id);
-      await updateUserData(user.id, {
-        'profile/savedOpportunities': savedOpportunities
-      });
-    }
+    await updateUserData(userId, {
+      'profile/savedOpportunities': saved
+    });
 
     res.json({ 
       message: 'Oportunidade salva com sucesso',
-      savedOpportunities
+      savedOpportunities: saved
     });
   } catch (error) {
-    res.status(500).json({ 
-      error: 'Erro ao salvar oportunidade',
-      message: 'Ocorreu um erro ao salvar a oportunidade'
-    });
+    console.error('Erro ao salvar oportunidade:', error);
+    res.status(500).json({ error: 'Erro no servidor' });
   }
 });
 
 opportunityRoutes.post('/apply/:id', authMiddleware, async (req, res) => {
   try {
-    const user = await findUserByEmail(req.userId);
-    if (!user) {
-      return res.status(401).json({ 
-        error: 'Usuário não encontrado',
-        message: 'Não foi possível encontrar seu usuário'
+    const { id: userId } = req.user;
+    const opportunityId = req.params.id;
+    
+    // Verificar se oportunidade existe
+    const opportunityRef = ref(db, `opportunities/${opportunityId}`);
+    const snapshot = await get(opportunityRef);
+    if (!snapshot.exists()) {
+      return res.status(404).json({ error: 'Oportunidade não encontrada' });
+    }
+
+    // Evitar candidaturas duplicadas
+    const existingApplication = (req.user.profile.applications || [])
+      .some(app => app.opportunityId === opportunityId);
+    
+    if (existingApplication) {
+      return res.status(409).json({ 
+        error: 'Candidatura já realizada' 
       });
     }
 
-    const opportunityRef = ref(db, 'opportunities/' + req.params.id);
-    const opportunitySnapshot = await get(opportunityRef);
-
-    if (!opportunitySnapshot.exists()) {
-      return res.status(404).json({ 
-        error: 'Oportunidade não encontrada',
-        message: 'Esta oportunidade não existe mais'
-      });
-    }
-
-    const applications = user.profile.applications || [];
-    if (applications.some(app => app.opportunityId === req.params.id)) {
-      return res.status(400).json({ 
-        error: 'Candidatura já realizada',
-        message: 'Você já se candidatou a esta oportunidade'
-      });
-    }
-
-    const application = {
-      opportunityId: req.params.id,
+    const newApplication = {
+      opportunityId,
       status: 'pending',
       appliedAt: new Date().toISOString()
     };
 
-    applications.push(application);
-    await updateUserData(user.id, {
+    const applications = [
+      ...(req.user.profile.applications || []),
+      newApplication
+    ];
+
+    await updateUserData(userId, {
       'profile/applications': applications
     });
 
     res.json({ 
       message: 'Candidatura realizada com sucesso',
-      application
+      application: newApplication
     });
   } catch (error) {
-    res.status(500).json({ 
-      error: 'Erro ao realizar candidatura',
-      message: 'Ocorreu um erro ao processar sua candidatura'
-    });
+    console.error('Erro ao aplicar para oportunidade:', error);
+    res.status(500).json({ error: 'Erro no servidor' });
   }
 });
 
 opportunityRoutes.get('/applications', authMiddleware, async (req, res) => {
   try {
-    const user = await findUserByEmail(req.userId);
-    if (!user || !user.profile.applications) {
-      return res.json([]);
-    }
+    const applications = req.user.profile.applications || [];
+    if (applications.length === 0) return res.json([]);
 
     const opportunitiesRef = ref(db, 'opportunities');
-    const opportunitiesSnapshot = await get(opportunitiesRef);
+    const snapshot = await get(opportunitiesRef);
     
-    if (!opportunitiesSnapshot.exists()) {
-      return res.json([]);
-    }
+    if (!snapshot.exists()) return res.json([]);
 
-    const opportunities = opportunitiesSnapshot.val();
-    const applications = user.profile.applications.map(app => {
-      const opportunity = opportunities[app.opportunityId];
+    const opportunities = snapshot.val();
+    const result = applications.map(app => {
+      const opp = opportunities[app.opportunityId];
       return {
         ...app,
-        opportunity: opportunity ? {
-          title: opportunity.title,
-          company: opportunity.company,
-          type: opportunity.type
+        opportunity: opp ? {
+          id: app.opportunityId,
+          title: opp.title,
+          company: opp.company,
+          type: opp.type
         } : null
       };
     });
 
-    res.json(applications);
+    res.json(result);
   } catch (error) {
-    res.status(500).json({ 
-      error: 'Erro ao buscar candidaturas',
-      message: 'Ocorreu um erro ao buscar suas candidaturas'
+    console.error('Erro ao buscar candidaturas:', error);
+    res.status(500).json({ error: 'Erro no servidor' });
+  }
+});
+
+opportunityRoutes.post('/', authMiddleware, employerMiddleware, async (req, res) => {
+  try {
+    const { title, description, type, location, salary, requirements, company } = req.body;
+    const requiredFields = { title, description, type, location, company };
+    
+    const missingFields = Object.entries(requiredFields)
+      .filter(([_, value]) => !value)
+      .map(([key]) => key);
+
+    if (missingFields.length > 0) {
+      return res.status(400).json({
+        error: 'Campos obrigatórios faltando',
+        fields: missingFields
+      });
+    }
+
+    const opportunity = {
+      title,
+      description,
+      type,
+      location,
+      salary: salary || '',
+      requirements: requirements || [],
+      company,
+      createdBy: req.user.id,
+      createdAt: new Date().toISOString(),
+      status: 'active'
+    };
+
+    const newOpportunityRef = ref(db, 'opportunities');
+    const newRef = push(newOpportunityRef);
+    await set(newRef, opportunity);
+
+    // Invalidar cache
+    opportunitiesCache = null;
+
+    res.status(201).json({
+      message: 'Vaga criada com sucesso',
+      opportunity: {
+        id: newRef.key,
+        ...opportunity
+      }
     });
+  } catch (error) {
+    console.error('Erro ao criar vaga:', error);
+    res.status(500).json({ error: 'Erro no servidor' });
   }
 });
 
@@ -440,30 +485,17 @@ app.use('/api/opportunities', opportunityRoutes);
 app.get('/health', async (req, res) => {
   try {
     const usersRef = ref(db, 'users');
-    const tokensRef = ref(db, 'tokens');
+    const snapshot = await get(usersRef);
     
-    const [usersSnapshot, tokensSnapshot] = await Promise.all([
-      get(usersRef),
-      get(tokensRef)
-    ]);
-
-    const userCount = usersSnapshot.exists() ? Object.keys(usersSnapshot.val()).length : 0;
-    const tokenCount = tokensSnapshot.exists() ? Object.keys(tokensSnapshot.val()).length : 0;
-
     res.json({
       status: 'ok',
       uptime: process.uptime(),
       memory: process.memoryUsage(),
-      users: userCount,
-      tokens: tokenCount
+      users: snapshot.exists() ? Object.keys(snapshot.val()).length : 0
     });
   } catch (error) {
     console.error('Erro no health check:', error);
-    res.status(500).json({
-      status: 'error',
-      message: 'Erro ao verificar saúde do sistema',
-      error: error.message
-    });
+    res.status(500).json({ status: 'error' });
   }
 });
 
@@ -472,11 +504,10 @@ app.use((err, req, res, next) => {
   console.error('Erro não tratado:', err);
   res.status(500).json({ 
     error: 'Erro interno do servidor',
-    message: 'Ocorreu um erro inesperado. Por favor, tente novamente mais tarde',
-    details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    message: 'Ocorreu um erro inesperado'
   });
 });
 
 app.listen(port, () => {
-  console.log(`Servidor backend rodando na porta ${port}`);
+  console.log(`Servidor rodando na porta ${port}`);
 });

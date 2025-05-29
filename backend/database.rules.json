@@ -9,7 +9,7 @@
       },
       "tokens": {
         ".indexOn": ["userId", "createdAt"],
-        "$token": {
+        "$tokenHash": {
           ".read": true,
           ".write": true
         }

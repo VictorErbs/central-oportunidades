@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import React, { useState, useEffect, useCallback, useMemo, useReducer } from 'react';
+import axios from './axios-config';
 import { db } from './firebase';
 import { ref, onValue, set, push, remove, update } from 'firebase/database';
 import './App.css';
+import { debounce } from 'lodash';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
 
@@ -113,7 +114,8 @@ function Register({ onGoToLogin }) {
     username: '',
     email: '',
     password: '',
-    confirmPassword: ''
+    confirmPassword: '',
+    userType: 'Jovem' 
   });
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -158,7 +160,8 @@ function Register({ onGoToLogin }) {
       await axios.post(`${API_URL}/api/auth/register`, {
         username: formData.username,
         email: formData.email,
-        password: formData.password
+        password: formData.password,
+        userType: formData.userType
       });
       setSuccess('Cadastro realizado com sucesso! Redirecionando...');
       setTimeout(() => {
@@ -206,6 +209,21 @@ function Register({ onGoToLogin }) {
         </div>
 
         <div className="form-group">
+          <label htmlFor="userType">Tipo de Usuário</label>
+          <select
+            id="userType"
+            name="userType"
+            value={formData.userType}
+            onChange={handleChange}
+            disabled={isLoading}
+            required
+          >
+            <option value="Jovem">Jovem</option>
+            <option value="Empregador">Empregador</option>
+          </select>
+        </div>
+
+        <div className="form-group">
           <label htmlFor="password">Senha</label>
           <input
             id="password"
@@ -241,6 +259,269 @@ function Register({ onGoToLogin }) {
         </button>
         <button type="button" onClick={onGoToLogin} className="secondary-button">
           Já tenho conta
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function CreateOpportunity({ onOpportunityCreated, user }) {
+  const [formData, setFormData] = useState({
+    title: '',
+    description: '',
+    type: '',
+    location: '',
+    salary: '',
+    requirements: [],
+    benefits: [],
+    company: '',
+    newRequirement: '',
+    newBenefit: ''
+  });
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleAddRequirement = () => {
+    if (formData.newRequirement.trim()) {
+      setFormData(prev => ({
+        ...prev,
+        requirements: [...(prev.requirements || []), prev.newRequirement],
+        newRequirement: ''
+      }));
+    }
+  };
+
+  const handleAddBenefit = () => {
+    if (formData.newBenefit.trim()) {
+      setFormData(prev => ({
+        ...prev,
+        benefits: [...(prev.benefits || []), prev.newBenefit],
+        newBenefit: ''
+      }));
+    }
+  };
+
+  const handleRemoveRequirement = (index) => {
+    setFormData(prev => ({
+      ...prev,
+      requirements: prev.requirements.filter((_, i) => i !== index)
+    }));
+  };
+
+  const handleRemoveBenefit = (index) => {
+    setFormData(prev => ({
+      ...prev,
+      benefits: prev.benefits.filter((_, i) => i !== index)
+    }));
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
+    setIsLoading(true);
+
+    try {
+      const res = await axios.post(`${API_URL}/api/opportunities`, {
+        title: formData.title,
+        description: formData.description,
+        type: formData.type,
+        location: formData.location,
+        salary: formData.salary,
+        requirements: formData.requirements || [],
+        benefits: formData.benefits || [],
+        company: formData.company
+      }, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+
+      setSuccess('Vaga criada com sucesso!');
+      if (success) {
+        setTimeout(() => setSuccess(''), 3000);
+      }
+      setFormData({
+        title: '',
+        description: '',
+        type: '',
+        location: '',
+        salary: '',
+        requirements: [],
+        benefits: [],
+        company: '',
+        newRequirement: '',
+        newBenefit: ''
+      });
+      onOpportunityCreated(res.data.opportunity);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Erro ao criar vaga');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="create-opportunity-container">
+      <h2>Criar Nova Vaga</h2>
+      {error && <div className="error">{error}</div>}
+      {success && <div className="success">{success}</div>}
+      <form onSubmit={handleSubmit} className="create-opportunity-form">
+        <div className="form-group">
+          <label htmlFor="title">Título da Vaga</label>
+          <input
+            id="title"
+            name="title"
+            placeholder="Digite o título da vaga"
+            value={formData.title}
+            onChange={handleChange}
+            disabled={isLoading}
+            required
+          />
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="company">Empresa</label>
+          <input
+            id="company"
+            name="company"
+            placeholder="Nome da empresa"
+            value={formData.company}
+            onChange={handleChange}
+            disabled={isLoading}
+            required
+          />
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="description">Descrição</label>
+          <textarea
+            id="description"
+            name="description"
+            placeholder="Descreva a vaga"
+            value={formData.description}
+            onChange={handleChange}
+            disabled={isLoading}
+            required
+          />
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="type">Tipo</label>
+          <select
+            id="type"
+            name="type"
+            value={formData.type}
+            onChange={handleChange}
+            disabled={isLoading}
+            required
+          >
+            <option value="">Selecione o tipo</option>
+            <option value="Estágio">Estágio</option>
+            <option value="Curso">Curso</option>
+            <option value="Voluntário">Voluntário</option>
+          </select>
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="location">Localização</label>
+          <input
+            id="location"
+            name="location"
+            placeholder="Cidade ou 'Online'"
+            value={formData.location}
+            onChange={handleChange}
+            disabled={isLoading}
+            required
+          />
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="salary">Salário (opcional)</label>
+          <input
+            id="salary"
+            name="salary"
+            placeholder="Salário ou bolsa"
+            value={formData.salary}
+            onChange={handleChange}
+            disabled={isLoading}
+          />
+        </div>
+
+        <div className="form-group">
+          <label>Requisitos</label>
+          <div className="requirements-input">
+            <input
+              name="newRequirement"
+              placeholder="Adicionar requisito"
+              value={formData.newRequirement}
+              onChange={handleChange}
+              disabled={isLoading}
+            />
+            <button 
+              type="button" 
+              onClick={handleAddRequirement} 
+              disabled={isLoading}
+            >
+              Adicionar
+            </button>
+          </div>
+          <ul className="requirements-list">
+            {(formData.requirements || []).map((req, index) => (
+              <li key={index}>
+                {req}
+                <button 
+                  type="button" 
+                  onClick={() => handleRemoveRequirement(index)}
+                  disabled={isLoading}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="form-group">
+          <label>Benefícios</label>
+          <div className="benefits-input">
+            <input
+              name="newBenefit"
+              placeholder="Adicionar benefício"
+              value={formData.newBenefit}
+              onChange={handleChange}
+              disabled={isLoading}
+            />
+            <button 
+              type="button" 
+              onClick={handleAddBenefit} 
+              disabled={isLoading}
+            >
+              Adicionar
+            </button>
+          </div>
+          <ul className="benefits-list">
+            {(formData.benefits || []).map((benefit, index) => (
+              <li key={index}>
+                {benefit}
+                <button 
+                  type="button" 
+                  onClick={() => handleRemoveBenefit(index)}
+                  disabled={isLoading}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <button type="submit" disabled={isLoading}>
+          {isLoading ? 'Criando...' : 'Criar Vaga'}
         </button>
       </form>
     </div>
@@ -529,7 +810,7 @@ function OpportunityCard({ opportunity, onSave, isSaved }) {
       <div className="requirements">
         <h4>Requisitos:</h4>
         <ul>
-          {opportunity.requirements.map((req, index) => (
+          {(opportunity.requirements || []).map((req, index) => (
             <li key={index}>{req}</li>
           ))}
         </ul>
@@ -537,7 +818,7 @@ function OpportunityCard({ opportunity, onSave, isSaved }) {
       <div className="benefits">
         <h4>Benefícios:</h4>
         <ul>
-          {opportunity.benefits.map((benefit, index) => (
+          {(opportunity.benefits || []).map((benefit, index) => (
             <li key={index}>{benefit}</li>
           ))}
         </ul>
@@ -607,70 +888,47 @@ function Applications({ token }) {
 function RecommendationEngine({ user, opportunities }) {
   const [recommendations, setRecommendations] = useState([]);
 
-  useEffect(() => {
-    if (user?.profile) {
-      // Analisa o perfil do usuário e as oportunidades salvas
-      const userSkills = user.profile.skills || [];
-      const userInterests = user.profile.interests || [];
-      const savedOpportunities = user.profile.savedOpportunities || [];
+  const calculateRecommendations = useCallback(() => {
+    if (!user?.profile) return [];
 
-      // Calcula pontuação para cada oportunidade
-      const scoredOpportunities = opportunities.map(opp => {
+    const userSkills = user.profile.skills || [];
+    const userInterests = user.profile.interests || [];
+    const savedOpportunities = user.profile.savedOpportunities || [];
+
+    return opportunities
+      .map(opp => {
         let score = 0;
         
-        // Pontua por tipo de oportunidade baseado em interesses
-        if (userInterests.includes(opp.type)) {
-          score += 3;
-        }
-
-        // Pontua por localização
-        if (opp.location === user.profile.location) {
-          score += 2;
-        }
-
-        // Pontua por habilidades requeridas
+        if (userInterests.includes(opp.type)) score += 3;
+        if (opp.location === user.profile.location) score += 2;
+        
         const matchingSkills = opp.requirements.filter(req => 
-          userSkills.some(skill => 
-            skill.toLowerCase().includes(req.toLowerCase())
-          )
+          userSkills.some(skill => skill.toLowerCase().includes(req.toLowerCase()))
         );
         score += matchingSkills.length;
-
-        // Penaliza oportunidades já salvas
-        if (savedOpportunities.includes(opp.id)) {
-          score -= 5;
-        }
-
+        
+        if (savedOpportunities.includes(opp.id)) score -= 5;
+        
         return { ...opp, score };
-      });
-
-      // Ordena por pontuação e pega as top 3
-      const topRecommendations = scoredOpportunities
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 3);
-
-      setRecommendations(topRecommendations);
-    }
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
   }, [user, opportunities]);
 
-  const scrollToOpportunity = (opportunityId) => {
+  useEffect(() => {
+    setRecommendations(calculateRecommendations());
+  }, [calculateRecommendations]);
+
+  const scrollToOpportunity = useCallback((opportunityId) => {
     const opportunityElement = document.getElementById(`opportunity-${opportunityId}`);
     if (opportunityElement) {
-      opportunityElement.scrollIntoView({ 
-        behavior: 'smooth',
-        block: 'center'
-      });
-      // Adiciona um destaque temporário
+      opportunityElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
       opportunityElement.classList.add('highlight-opportunity');
-      setTimeout(() => {
-        opportunityElement.classList.remove('highlight-opportunity');
-      }, 2000);
+      setTimeout(() => opportunityElement.classList.remove('highlight-opportunity'), 2000);
     }
-  };
+  }, []);
 
-  if (recommendations.length === 0) {
-    return null;
-  }
+  if (recommendations.length === 0) return null;
 
   return (
     <div className="recommendations-container">
@@ -705,21 +963,38 @@ function Opportunities({ token, user, onLogout }) {
     location: ''
   });
   const [activeTab, setActiveTab] = useState('todas');
+  const [showCreateForm, setShowCreateForm] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
+  const [cache, setCache] = useState({ data: null, timestamp: 0 });
 
-  useEffect(() => {
-    loadOpportunities();
-    loadSavedOpportunities();
-  }, []);
+  const CACHE_DURATION = 5 * 60 * 1000; // 5 minutos
 
-  const loadOpportunities = async () => {
+  const loadOpportunities = useCallback(async () => {
     try {
       setIsLoading(true);
+      
+      // Verifica cache
+      const now = Date.now();
+      if (cache.data && now - cache.timestamp < CACHE_DURATION) {
+        setOpportunities(cache.data);
+        setIsLoading(false);
+        return;
+      }
+
       const res = await axios.get(`${API_URL}/api/opportunities`, {
         params: filters
       });
-      setOpportunities(res.data);
+      
+      // Garante que cada oportunidade tenha arrays para requirements e benefits
+      const formattedOpportunities = res.data.map(opp => ({
+        ...opp,
+        requirements: opp.requirements || [],
+        benefits: opp.benefits || []
+      }));
+      
+      setOpportunities(formattedOpportunities);
+      setCache({ data: formattedOpportunities, timestamp: now });
       setError('');
     } catch (error) {
       setError('Erro ao carregar oportunidades');
@@ -727,20 +1002,36 @@ function Opportunities({ token, user, onLogout }) {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [filters, cache]);
 
-  const loadSavedOpportunities = async () => {
+  const debouncedLoadOpportunities = useCallback(
+    debounce(loadOpportunities, 500),
+    [loadOpportunities]
+  );
+
+  useEffect(() => {
+    loadOpportunities();
+    loadSavedOpportunities();
+  }, []);
+
+  const loadSavedOpportunities = useCallback(async () => {
     try {
       const res = await axios.get(`${API_URL}/api/opportunities/saved`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setSavedOpportunities(res.data);
+      // Garante que cada oportunidade salva tenha arrays para requirements e benefits
+      const formattedSavedOpportunities = res.data.map(opp => ({
+        ...opp,
+        requirements: opp.requirements || [],
+        benefits: opp.benefits || []
+      }));
+      setSavedOpportunities(formattedSavedOpportunities);
     } catch (error) {
       console.error('Erro ao carregar oportunidades salvas:', error);
     }
-  };
+  }, [token]);
 
-  const handleSaveOpportunity = async (id) => {
+  const handleSaveOpportunity = useCallback(async (id) => {
     try {
       await axios.post(`${API_URL}/api/opportunities/save/${id}`, {}, {
         headers: { Authorization: `Bearer ${token}` }
@@ -749,26 +1040,58 @@ function Opportunities({ token, user, onLogout }) {
     } catch (error) {
       console.error('Erro ao salvar oportunidade:', error);
     }
+  }, [token, loadSavedOpportunities]);
+
+  const handleOpportunityCreated = (newOpportunity) => {
+    // Garante que a nova oportunidade tenha arrays para requirements e benefits
+    const formattedOpportunity = {
+      ...newOpportunity,
+      requirements: newOpportunity.requirements || [],
+      benefits: newOpportunity.benefits || []
+    };
+    setOpportunities(prev => [formattedOpportunity, ...prev]);
+    setShowCreateForm(false);
   };
 
-  const handleFilterChange = (e) => {
+  const handleFilterChange = useCallback((e) => {
     const { name, value } = e.target;
     setFilters(prev => ({ ...prev, [name]: value }));
-  };
+    debouncedLoadOpportunities();
+  }, [debouncedLoadOpportunities]);
 
-  const handleFilterSubmit = (e) => {
+  const handleFilterSubmit = useCallback((e) => {
     e.preventDefault();
     loadOpportunities();
-  };
+  }, [loadOpportunities]);
 
-  const displayedOpportunities = activeTab === 'salvas' ? savedOpportunities : opportunities;
+  const displayedOpportunities = useMemo(() => 
+    activeTab === 'salvas' ? savedOpportunities : opportunities,
+    [activeTab, savedOpportunities, opportunities]
+  );
 
   return (
     <div className="opportunities-container">
       <div className="opportunities-header">
         <h2>Oportunidades</h2>
-        <button onClick={onLogout} className="logout-button">Sair</button>
+        <div className="header-actions">
+          {user?.profile?.userType === 'Empregador' && (
+            <button 
+              onClick={() => setShowCreateForm(!showCreateForm)}
+              className="create-opportunity-button"
+            >
+              {showCreateForm ? 'Fechar Formulário' : 'Criar Nova Vaga'}
+            </button>
+          )}
+          <button onClick={onLogout} className="logout-button">Sair</button>
+        </div>
       </div>
+      
+      {showCreateForm && user?.profile?.userType === 'Empregador' && (
+        <CreateOpportunity 
+          onOpportunityCreated={handleOpportunityCreated} 
+          user={user}
+        />
+      )}
       
       {activeTab === 'todas' && (
         <RecommendationEngine user={user} opportunities={opportunities} />
@@ -937,11 +1260,35 @@ function NotificationSystem() {
   );
 }
 
+const initialState = {
+  token: null,
+  user: null,
+  page: 'login',
+  feedback: { type: '', message: '' }
+};
+
+function reducer(state, action) {
+  switch (action.type) {
+    case 'SET_TOKEN':
+      return { ...state, token: action.payload };
+    case 'SET_USER':
+      return { ...state, user: action.payload };
+    case 'SET_PAGE':
+      return { ...state, page: action.payload };
+    case 'SET_FEEDBACK':
+      return { ...state, feedback: action.payload };
+    case 'CLEAR_FEEDBACK':
+      return { ...state, feedback: { type: '', message: '' } };
+    case 'LOGOUT':
+      return { ...initialState, page: 'login' };
+    default:
+      return state;
+  }
+}
+
 function App() {
-  const [token, setToken] = useState(null);
-  const [user, setUser] = useState(null);
-  const [page, setPage] = useState('login');
-  const [feedback, setFeedback] = useState({ type: '', message: '' });
+  const [state, dispatch] = useReducer(reducer, initialState);
+  const { token, user, page, feedback } = state;
 
   useEffect(() => {
     const savedToken = localStorage.getItem('token');
@@ -964,11 +1311,12 @@ function App() {
               twitter: ''
             },
             interests: [],
-            savedOpportunities: []
+            savedOpportunities: [],
+            userType: 'Jovem'
           }
         };
-        setToken(savedToken);
-        setUser(userData);
+        dispatch({ type: 'SET_TOKEN', payload: savedToken });
+        dispatch({ type: 'SET_USER', payload: userData });
       } catch (error) {
         console.error('Erro ao carregar usuário:', error);
         localStorage.removeItem('token');
@@ -979,54 +1327,51 @@ function App() {
 
   const handleLogin = async (token, userData) => {
     try {
-      // Salvar token no Firebase
-      const tokenRef = ref(db, `tokens/${token}`);
+      const tokenRef = ref(db, `tokens/${userData.id}`);
       await set(tokenRef, {
-        userId: userData.id,
+        token,
         createdAt: new Date().toISOString()
       });
 
-      setToken(token);
-      setUser(userData);
+      dispatch({ type: 'SET_TOKEN', payload: token });
+      dispatch({ type: 'SET_USER', payload: userData });
+      dispatch({ type: 'SET_PAGE', payload: 'oportunidades' });
+      dispatch({ 
+        type: 'SET_FEEDBACK', 
+        payload: { type: 'success', message: 'Login realizado com sucesso!' }
+      });
+
       localStorage.setItem('token', token);
       localStorage.setItem('user', JSON.stringify(userData));
-      setPage('oportunidades');
-      setFeedback({
-        type: 'success',
-        message: 'Login realizado com sucesso!'
-      });
     } catch (error) {
       console.error('Erro ao fazer login:', error);
-      setFeedback({
-        type: 'error',
-        message: 'Erro ao fazer login. Tente novamente.'
+      dispatch({ 
+        type: 'SET_FEEDBACK', 
+        payload: { type: 'error', message: 'Erro ao fazer login. Tente novamente.' }
       });
     }
   };
 
   const handleLogout = async () => {
     try {
-      const token = localStorage.getItem('token');
-      if (token) {
-        // Remover token do Firebase
-        const tokenRef = ref(db, `tokens/${token}`);
+      const user = JSON.parse(localStorage.getItem('user'));
+      if (user?.id) {
+        const tokenRef = ref(db, `tokens/${user.id}`);
         await remove(tokenRef);
       }
 
-      setToken(null);
-      setUser(null);
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      setPage('login');
-      setFeedback({
-        type: 'success',
-        message: 'Logout realizado com sucesso!'
+      dispatch({ type: 'LOGOUT' });
+      dispatch({ 
+        type: 'SET_FEEDBACK', 
+        payload: { type: 'success', message: 'Logout realizado com sucesso!' }
       });
     } catch (error) {
       console.error('Erro ao fazer logout:', error);
-      setFeedback({
-        type: 'error',
-        message: 'Erro ao fazer logout. Tente novamente.'
+      dispatch({ 
+        type: 'SET_FEEDBACK', 
+        payload: { type: 'error', message: 'Erro ao fazer logout. Tente novamente.' }
       });
     }
   };
@@ -1038,17 +1383,17 @@ function App() {
         profile: updatedUser.profile
       });
 
-      setUser(updatedUser);
+      dispatch({ type: 'SET_USER', payload: updatedUser });
       localStorage.setItem('user', JSON.stringify(updatedUser));
-      setFeedback({
-        type: 'success',
-        message: 'Perfil atualizado com sucesso!'
+      dispatch({ 
+        type: 'SET_FEEDBACK', 
+        payload: { type: 'success', message: 'Perfil atualizado com sucesso!' }
       });
     } catch (error) {
       console.error('Erro ao atualizar perfil:', error);
-      setFeedback({
-        type: 'error',
-        message: 'Erro ao atualizar perfil. Tente novamente.'
+      dispatch({ 
+        type: 'SET_FEEDBACK', 
+        payload: { type: 'error', message: 'Erro ao atualizar perfil. Tente novamente.' }
       });
     }
   };
@@ -1065,18 +1410,18 @@ function App() {
           <Feedback
             type={feedback.type}
             message={feedback.message}
-            onClose={() => setFeedback({ type: '', message: '' })}
+            onClose={() => dispatch({ type: 'CLEAR_FEEDBACK' })}
           />
         )}
         {page === 'login' ? (
           <>
             <Login onLogin={handleLogin} />
-            <button onClick={() => setPage('cadastro')} className="switch-auth-button">
+            <button onClick={() => dispatch({ type: 'SET_PAGE', payload: 'cadastro' })} className="switch-auth-button">
               Não tem conta? Cadastre-se
             </button>
           </>
         ) : (
-          <Register onGoToLogin={() => setPage('login')} />
+          <Register onGoToLogin={() => dispatch({ type: 'SET_PAGE', payload: 'login' })} />
         )}
       </div>
     );
@@ -1094,20 +1439,20 @@ function App() {
         <Feedback
           type={feedback.type}
           message={feedback.message}
-          onClose={() => setFeedback({ type: '', message: '' })}
+          onClose={() => dispatch({ type: 'CLEAR_FEEDBACK' })}
         />
       )}
       <div className="main-content">
         <nav className="main-nav">
           <button
             className={`nav-button ${page === 'oportunidades' ? 'active' : ''}`}
-            onClick={() => setPage('oportunidades')}
+            onClick={() => dispatch({ type: 'SET_PAGE', payload: 'oportunidades' })}
           >
             Oportunidades
           </button>
           <button
             className={`nav-button ${page === 'perfil' ? 'active' : ''}`}
-            onClick={() => setPage('perfil')}
+            onClick={() => dispatch({ type: 'SET_PAGE', payload: 'perfil' })}
           >
             Meu Perfil
           </button>

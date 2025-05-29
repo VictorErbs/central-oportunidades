@@ -1,5 +1,6 @@
-import { initializeApp } from 'firebase/app';
-import { getDatabase } from 'firebase/database';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const firebaseConfig = {
   apiKey: "AIzaSyAHnb4hdTMkZpd5cWwbTBlIN-Dm1YNOWdY",
@@ -12,7 +13,20 @@ const firebaseConfig = {
   measurementId: "G-0BHR81893G"
 };
 
-const app = initializeApp(firebaseConfig);
-const db = getDatabase(app);
-
-export { db }; 
+export const config = {
+  firebase: firebaseConfig,
+  jwt: {
+    secret: 'pLt3Bb6nGUvX+W97zTfMuI7XgqK0IExWML6AhdDe2eY=',
+    expiresIn: '24h',
+    algorithm: 'HS256'
+  },
+  api: {
+    url: 'http://localhost:3001',
+  },
+  server: {
+    port: 3001,
+  },
+  bcrypt: {
+    saltRounds: 10
+  }
+}; 
