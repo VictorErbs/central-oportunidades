@@ -5,6 +5,7 @@ import morgan from 'morgan';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { config } from './src/config.js';
+import seleniumRoutes from './src/routes/selenium.routes.js';
 import {
   db,
   createUser,
@@ -23,6 +24,9 @@ const port = config.server.port;
 app.use(cors());
 app.use(bodyParser.json());
 app.use(morgan('dev'));
+
+// Rotas
+app.use('/api/selenium', seleniumRoutes);
 
 // Funções de validação
 function isValidEmail(email) {

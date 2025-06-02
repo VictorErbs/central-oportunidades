@@ -1,17 +1,42 @@
 FROM node:16-alpine
 WORKDIR /app
 
-# Instalar dependências necessárias para o Firebase
-RUN apk add --no-cache python3 make g++
+# Instalar dependências necessárias para o Firebase e Chrome
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++ \
+    chromium \
+    chromium-chromedriver \
+    xvfb \
+    dbus \
+    ttf-freefont \
+    fontconfig \
+    udev \
+    bash \
+    curl \
+    xorg-server \
+    xf86-video-dummy
+
+# Configurar variáveis de ambiente para o Chrome
+ENV DISPLAY=:99
+ENV NODE_ENV=production
+ENV PATH="/usr/bin:${PATH}"
 
 # Copiar arquivos de dependências
 COPY package*.json ./
 
-# Instalar dependências
-RUN npm install --production
+# Instalar dependências e configurar chromedriver
+RUN npm install --production && \
+    npm install selenium-webdriver@4.18.1 && \
+    mkdir -p /root/.cache/selenium/chromedriver/linux64/119.0.6045.105 && \
+    cp /usr/bin/chromedriver /root/.cache/selenium/chromedriver/linux64/119.0.6045.105/ && \
+    chmod +x /root/.cache/selenium/chromedriver/linux64/119.0.6045.105/chromedriver
 
 # Copiar o resto dos arquivos
 COPY . .
 
-EXPOSE 3001
-CMD [ "npm", "start" ]
+# Iniciar Xvfb e o servidor
+CMD Xvfb :99 -screen 0 1920x1080x24 > /dev/null 2>&1 & \
+    sleep 1 && \
+    npm start

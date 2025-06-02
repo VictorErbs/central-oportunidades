@@ -15,6 +15,12 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    # Configurações para o Selenium
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp=unconfined
+    shm_size: '2gb'
 
   frontend:
     build: ./frontend
