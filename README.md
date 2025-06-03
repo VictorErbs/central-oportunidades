@@ -21,7 +21,7 @@ Sistema de gerenciamento de oportunidades para jovens, conectando-os com empresa
 
 1. Clone o repositório:
 ```bash
-git clone https://github.com/seu-usuario/central-oportunidades.git
+git clone https://github.com/VictorErbs/central-oportunidades.git
 cd central-oportunidades
 ```
 
