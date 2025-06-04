@@ -72,7 +72,6 @@ const authMiddleware = async (req, res, next) => {
     req.user = { id: decoded.userId, ...snapshot.val() };
     next();
   } catch (error) {
-    console.error('Erro na autenticação:', error);
     const message = error.name === 'TokenExpiredError' 
       ? 'Token expirado' 
       : 'Token inválido';
@@ -159,7 +158,6 @@ authRoutes.post('/register', async (req, res) => {
       token
     });
   } catch (error) {
-    console.error('Erro no registro:', error);
     res.status(500).json({ error: 'Erro no servidor' });
   }
 });
@@ -195,7 +193,6 @@ authRoutes.post('/login', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Erro no login:', error);
     res.status(500).json({ error: 'Erro no servidor' });
   }
 });
@@ -212,7 +209,6 @@ profileRoutes.get('/', authMiddleware, async (req, res) => {
     // Dados do usuário já estão disponíveis via middleware
     res.json(req.user);
   } catch (error) {
-    console.error('Erro ao buscar perfil:', error);
     res.status(500).json({ error: 'Erro no servidor' });
   }
 });
@@ -239,7 +235,6 @@ profileRoutes.put('/', authMiddleware, async (req, res) => {
     await updateUserData(req.user.id, updates);
     res.json({ message: 'Perfil atualizado com sucesso' });
   } catch (error) {
-    console.error('Erro ao atualizar perfil:', error);
     res.status(500).json({ error: 'Erro no servidor' });
   }
 });
@@ -295,7 +290,6 @@ opportunityRoutes.get('/', async (req, res) => {
 
     res.json(results);
   } catch (error) {
-    console.error('Erro ao buscar oportunidades:', error);
     res.status(500).json({ error: 'Erro no servidor' });
   }
 });
@@ -316,7 +310,6 @@ opportunityRoutes.get('/saved', authMiddleware, async (req, res) => {
 
     res.json(opportunities);
   } catch (error) {
-    console.error('Erro ao buscar oportunidades salvas:', error);
     res.status(500).json({ error: 'Erro no servidor' });
   }
 });
@@ -325,30 +318,31 @@ opportunityRoutes.post('/save/:id', authMiddleware, async (req, res) => {
   try {
     const { id: userId } = req.user;
     const opportunityId = req.params.id;
-    
     // Verificar se oportunidade existe
     const opportunityRef = ref(db, `opportunities/${opportunityId}`);
     const snapshot = await get(opportunityRef);
     if (!snapshot.exists()) {
       return res.status(404).json({ error: 'Oportunidade não encontrada' });
     }
-
-    // Atualizar lista de salvos
-    const saved = [...new Set([
-      ...(req.user.profile.savedOpportunities || []), 
-      opportunityId
-    ])];
-
+    // Toggle salvar/remover
+    const saved = req.user.profile.savedOpportunities || [];
+    let updated;
+    let message;
+    if (saved.includes(opportunityId)) {
+      updated = saved.filter(oid => oid !== opportunityId);
+      message = 'Oportunidade removida dos salvos';
+    } else {
+      updated = [...saved, opportunityId];
+      message = 'Oportunidade salva com sucesso';
+    }
     await updateUserData(userId, {
-      'profile/savedOpportunities': saved
+      'profile/savedOpportunities': updated
     });
-
     res.json({ 
-      message: 'Oportunidade salva com sucesso',
-      savedOpportunities: saved
+      message,
+      savedOpportunities: updated
     });
   } catch (error) {
-    console.error('Erro ao salvar oportunidade:', error);
     res.status(500).json({ error: 'Erro no servidor' });
   }
 });
@@ -395,7 +389,6 @@ opportunityRoutes.post('/apply/:id', authMiddleware, async (req, res) => {
       application: newApplication
     });
   } catch (error) {
-    console.error('Erro ao aplicar para oportunidade:', error);
     res.status(500).json({ error: 'Erro no servidor' });
   }
 });
@@ -426,7 +419,6 @@ opportunityRoutes.get('/applications', authMiddleware, async (req, res) => {
 
     res.json(result);
   } catch (error) {
-    console.error('Erro ao buscar candidaturas:', error);
     res.status(500).json({ error: 'Erro no servidor' });
   }
 });
@@ -475,7 +467,6 @@ opportunityRoutes.post('/', authMiddleware, employerMiddleware, async (req, res)
       }
     });
   } catch (error) {
-    console.error('Erro ao criar vaga:', error);
     res.status(500).json({ error: 'Erro no servidor' });
   }
 });
@@ -498,14 +489,12 @@ app.get('/health', async (req, res) => {
       users: snapshot.exists() ? Object.keys(snapshot.val()).length : 0
     });
   } catch (error) {
-    console.error('Erro no health check:', error);
     res.status(500).json({ status: 'error' });
   }
 });
 
 // Middleware de tratamento de erros
 app.use((err, req, res, next) => {
-  console.error('Erro não tratado:', err);
   res.status(500).json({ 
     error: 'Erro interno do servidor',
     message: 'Ocorreu um erro inesperado'

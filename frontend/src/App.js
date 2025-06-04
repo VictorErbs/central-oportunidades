@@ -561,7 +561,7 @@ function Profile({ user, onUpdateProfile }) {
     setMessage({ type: '', text: '' });
 
     try {
-      await axios.put(`${API_URL}/api/profile`, { profile }, {
+      await axios.put(`${API_URL}/api/profile`, profile, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
       onUpdateProfile({ ...user, profile });
@@ -757,7 +757,7 @@ function OpportunityCard({ opportunity, onSave, isSaved }) {
   const [isApplying, setIsApplying] = useState(false);
   const [applicationStatus, setApplicationStatus] = useState(null);
 
-  const handleSave = async () => {
+  const handleSaveToggle = async () => {
     setIsSaving(true);
     try {
       await onSave(opportunity.id);
@@ -793,11 +793,13 @@ function OpportunityCard({ opportunity, onSave, isSaved }) {
             {isApplying ? 'Candidatando...' : (applicationStatus ? 'Candidatado' : 'Candidatar-se')}
           </button>
           <button 
-            onClick={handleSave}
+            onClick={handleSaveToggle}
             className={`save-button ${isSaved ? 'saved' : ''}`}
             disabled={isSaving}
           >
-            {isSaving ? 'Salvando...' : (isSaved ? 'Salvo' : 'Salvar')}
+            {isSaving
+              ? (isSaved ? 'Removendo...' : 'Salvando...')
+              : (isSaved ? 'Remover dos Salvos' : 'Salvar')}
           </button>
         </div>
       </div>
@@ -818,9 +820,12 @@ function OpportunityCard({ opportunity, onSave, isSaved }) {
       <div className="benefits">
         <h4>Benefícios:</h4>
         <ul>
-          {(opportunity.benefits || []).map((benefit, index) => (
-            <li key={index}>{benefit}</li>
-          ))}
+          {(opportunity.benefits && opportunity.benefits.length > 0)
+            ? opportunity.benefits.map((benefit, index) => (
+                <li key={index}>{benefit}</li>
+              ))
+            : <li>Nenhum benefício informado</li>
+          }
         </ul>
       </div>
       <div className="opportunity-footer">
@@ -1064,10 +1069,24 @@ function Opportunities({ token, user, onLogout }) {
     loadOpportunities();
   }, [loadOpportunities]);
 
-  const displayedOpportunities = useMemo(() => 
-    activeTab === 'salvas' ? savedOpportunities : opportunities,
-    [activeTab, savedOpportunities, opportunities]
-  );
+  const displayedOpportunities = useMemo(() => {
+    let list = activeTab === 'salvas' ? savedOpportunities : opportunities;
+    // Filtro manual caso o backend não filtre corretamente
+    if (filters.busca) {
+      list = list.filter(opp =>
+        opp.title?.toLowerCase().includes(filters.busca.toLowerCase()) ||
+        opp.company?.toLowerCase().includes(filters.busca.toLowerCase()) ||
+        opp.description?.toLowerCase().includes(filters.busca.toLowerCase())
+      );
+    }
+    if (filters.type) {
+      list = list.filter(opp => opp.type === filters.type);
+    }
+    if (filters.location) {
+      list = list.filter(opp => opp.location === filters.location);
+    }
+    return list;
+  }, [activeTab, savedOpportunities, opportunities, filters]);
 
   return (
     <div className="opportunities-container">
@@ -1170,14 +1189,17 @@ function Opportunities({ token, user, onLogout }) {
         </div>
       ) : (
         <div className="opportunities-grid">
-          {displayedOpportunities.map(opp => (
-            <OpportunityCard
-              key={opp.id}
-              opportunity={opp}
-              onSave={handleSaveOpportunity}
-              isSaved={savedOpportunities.some(saved => saved.id === opp.id)}
-            />
-          ))}
+          {displayedOpportunities.map(opp => {
+            const isSaved = savedOpportunities.some(saved => saved.id === opp.id);
+            return (
+              <OpportunityCard
+                key={opp.id}
+                opportunity={opp}
+                onSave={handleSaveOpportunity}
+                isSaved={isSaved}
+              />
+            );
+          })}
         </div>
       )}
     </div>
@@ -1318,7 +1340,6 @@ function App() {
         dispatch({ type: 'SET_TOKEN', payload: savedToken });
         dispatch({ type: 'SET_USER', payload: userData });
       } catch (error) {
-        console.error('Erro ao carregar usuário:', error);
         localStorage.removeItem('token');
         localStorage.removeItem('user');
       }
@@ -1344,7 +1365,6 @@ function App() {
       localStorage.setItem('token', token);
       localStorage.setItem('user', JSON.stringify(userData));
     } catch (error) {
-      console.error('Erro ao fazer login:', error);
       dispatch({ 
         type: 'SET_FEEDBACK', 
         payload: { type: 'error', message: 'Erro ao fazer login. Tente novamente.' }
@@ -1368,7 +1388,6 @@ function App() {
         payload: { type: 'success', message: 'Logout realizado com sucesso!' }
       });
     } catch (error) {
-      console.error('Erro ao fazer logout:', error);
       dispatch({ 
         type: 'SET_FEEDBACK', 
         payload: { type: 'error', message: 'Erro ao fazer logout. Tente novamente.' }
@@ -1390,7 +1409,6 @@ function App() {
         payload: { type: 'success', message: 'Perfil atualizado com sucesso!' }
       });
     } catch (error) {
-      console.error('Erro ao atualizar perfil:', error);
       dispatch({ 
         type: 'SET_FEEDBACK', 
         payload: { type: 'error', message: 'Erro ao atualizar perfil. Tente novamente.' }

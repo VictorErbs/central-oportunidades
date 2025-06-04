@@ -8,15 +8,11 @@ const app = express();
 
 // Middleware para log de requisições
 app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-  console.log('Headers:', req.headers);
   next();
 });
 
 // Middleware para log de erros
 app.use((err, req, res, next) => {
-  console.error('Erro não tratado:', err);
-  console.error('Stack trace:', err.stack);
   res.status(500).json({ error: 'Erro interno do servidor' });
 });
 
@@ -35,7 +31,6 @@ app.use('/api/auth', authRoutes);
 
 // Rota protegida de exemplo
 app.get('/api/protected', authenticateToken, (req, res) => {
-  console.log('Acesso à rota protegida por:', req.user.id);
   res.json({ message: 'Rota protegida acessada com sucesso' });
 });
 

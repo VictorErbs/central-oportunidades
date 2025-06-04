@@ -29,11 +29,8 @@ export async function exemploScraping() {
         
         // Exemplo de extração de dados
         const texto = await elemento.getText();
-        console.log('Texto encontrado:', texto);
-
         return texto;
     } catch (error) {
-        console.error('Erro durante o scraping:', error);
         throw error;
     } finally {
         // Sempre fechar o driver

@@ -9,7 +9,6 @@ router.get('/health', async (req, res) => {
         const resultado = await verificarSaudeSelenium();
         res.json(resultado);
     } catch (error) {
-        console.error('Erro na rota de saúde:', error);
         res.status(500).json({
             status: 'erro',
             erro: error.message,
@@ -21,9 +20,7 @@ router.get('/health', async (req, res) => {
 
 router.get('/test', async (req, res) => {
     try {
-        console.log('Iniciando requisição de teste do Selenium');
         const resultado = await testarSelenium();
-        console.log('Resultado do teste:', resultado);
         
         if (!resultado.sucesso) {
             return res.status(500).json(resultado);
@@ -31,7 +28,6 @@ router.get('/test', async (req, res) => {
         
         res.json(resultado);
     } catch (error) {
-        console.error('Erro na rota de teste:', error);
         res.status(500).json({
             sucesso: false,
             erro: error.message,

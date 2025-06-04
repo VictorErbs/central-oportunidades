@@ -23,7 +23,6 @@ export async function verificarSaudeSelenium() {
             mensagem: 'Selenium está funcionando corretamente'
         };
     } catch (error) {
-        console.error('Erro na verificação de saúde do Selenium:', error);
         return {
             status: 'erro',
             erro: error.message,
@@ -32,7 +31,6 @@ export async function verificarSaudeSelenium() {
         };
     } finally {
         if (driver) {
-            console.log('Fechando driver...');
             await driver.quit();
         }
     }
